@@ -167,29 +167,69 @@
 
         <StackPanel Margin="24,22,24,24">
 
-            <!-- Header: icon + title -->
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                <Ellipse Width="32" Height="32" Margin="0,0,12,0">
-                    <Ellipse.Fill>
-                        <RadialGradientBrush>
-                            <GradientStop Color="#FF8C42" Offset="0"/>
-                            <GradientStop Color="#E8441A" Offset="1"/>
-                        </RadialGradientBrush>
-                    </Ellipse.Fill>
-                </Ellipse>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="Connect to Claude"
-                               Foreground="#E8E8E8"
-                               FontFamily="Segoe UI"
-                               FontSize="15"
-                               FontWeight="SemiBold"/>
-                    <TextBlock x:Name="SubtitleText"
-                               Text="Scanning your browsers…"
-                               Foreground="#666666"
-                               FontFamily="Segoe UI"
-                               FontSize="11"/>
+            <!-- Header: icon + title + close -->
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Ellipse Width="32" Height="32" Margin="0,0,12,0">
+                        <Ellipse.Fill>
+                            <RadialGradientBrush>
+                                <GradientStop Color="#FF8C42" Offset="0"/>
+                                <GradientStop Color="#E8441A" Offset="1"/>
+                            </RadialGradientBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Connect to Claude"
+                                   Foreground="#E8E8E8"
+                                   FontFamily="Segoe UI"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"/>
+                        <TextBlock x:Name="SubtitleText"
+                                   Text="Scanning your browsers…"
+                                   Foreground="#666666"
+                                   FontFamily="Segoe UI"
+                                   FontSize="11"/>
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
+
+                <!-- Close Button -->
+                <Button Grid.Column="1"
+                        x:Name="CloseBtn"
+                        Content="✕"
+                        Click="CloseBtn_Click"
+                        Foreground="#888888"
+                        Background="Transparent"
+                        FontSize="14"
+                        BorderThickness="0"
+                        VerticalAlignment="Top"
+                        HorizontalAlignment="Right"
+                        Margin="0,-4,-4,0"
+                        Cursor="Hand">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="Transparent" Padding="4">
+                                            <ContentPresenter/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="#EEEEEE"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+            </Grid>
 
             <!-- ══ SCANNING PANEL ════════════════════════════════════════ -->
             <StackPanel x:Name="ScanningPanel" Visibility="Visible">

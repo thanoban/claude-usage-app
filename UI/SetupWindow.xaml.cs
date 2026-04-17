@@ -206,6 +206,14 @@ public partial class SetupWindow : Window
             DragMove();
     }
 
+    private void CloseBtn_Click(object sender, RoutedEventArgs e)
+    {
+        // If we opened this from the system tray (App.OnStartup logic),
+        // we might need to shut down the app if it's the only window and not configured yet.
+        // But simply closing the window will let App.xaml.cs continue or the tray app stay running.
+        Close();
+    }
+
     // ── Panel switching ───────────────────────────────────────────────────────
 
     private enum Panel { Scanning, Picker, Connecting, Manual }

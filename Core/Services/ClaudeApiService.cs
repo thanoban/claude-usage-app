@@ -104,7 +104,6 @@ public class ClaudeApiService
         var url = $"https://claude.ai/api/organizations/{organizationId}/usage";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("content-type", "application/json");
         request.Headers.Add("Cookie", $"sessionKey={sessionKey}");
 
         HttpResponseMessage response;
