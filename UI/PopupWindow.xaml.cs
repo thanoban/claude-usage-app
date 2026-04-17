@@ -14,15 +14,17 @@ public partial class PopupWindow : Window
     private readonly UsageFetcher _fetcher;
     private readonly CredentialsStore _store;
     private readonly ClaudeConfigReader _configReader;
+    private readonly ClaudeApiService _api;
     private readonly DispatcherTimer _clockTimer;
     private Storyboard? _spinStoryboard;
     private bool _isSpinning;
 
-    public PopupWindow(UsageFetcher fetcher, CredentialsStore store, ClaudeConfigReader configReader)
+    public PopupWindow(UsageFetcher fetcher, CredentialsStore store, ClaudeConfigReader configReader, ClaudeApiService api)
     {
         _fetcher = fetcher;
         _store = store;
         _configReader = configReader;
+        _api = api;
 
         InitializeComponent();
 
@@ -193,9 +195,10 @@ public partial class PopupWindow : Window
     private void GearButton_Click(object sender, RoutedEventArgs e)
     {
         Hide();
-        var setup = new SetupWindow(_store, _configReader, async () =>
+        var setup = new SetupWindow(_store, _configReader, _api, async () =>
         {
             await _fetcher.RefreshAsync();
+            return _fetcher.Usage.Error;
         });
         setup.ShowDialog();
     }

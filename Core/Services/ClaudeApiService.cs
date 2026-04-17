@@ -39,6 +39,57 @@ public class ClaudeApiService
     }
 
     /// <summary>
+    /// Fetches the user's organization UUID using the session key alone.
+    /// Returns null if the request fails or the account has no org.
+    /// </summary>
+    public async Task<string?> FetchOrganizationIdAsync(string sessionKey, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sessionKey)) return null;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                "https://claude.ai/api/auth/current_account");
+            request.Headers.Add("Cookie", $"sessionKey={sessionKey}");
+
+            var response = await _http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            // Body can be HTML (Cloudflare) — bail
+            if (body.TrimStart().StartsWith('<')) return null;
+
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+
+            // Try memberships[0].organization.uuid first
+            if (root.TryGetProperty("memberships", out var memberships) &&
+                memberships.ValueKind == JsonValueKind.Array &&
+                memberships.GetArrayLength() > 0)
+            {
+                var first = memberships[0];
+                if (first.TryGetProperty("organization", out var org) &&
+                    org.TryGetProperty("uuid", out var uuid))
+                {
+                    var val = uuid.GetString();
+                    if (!string.IsNullOrWhiteSpace(val)) return val;
+                }
+            }
+
+            // Fallback: account.organization_uuid
+            if (root.TryGetProperty("account", out var account) &&
+                account.TryGetProperty("organization_uuid", out var orgUuid))
+            {
+                var val = orgUuid.GetString();
+                if (!string.IsNullOrWhiteSpace(val)) return val;
+            }
+
+            return null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Fetches usage data from Claude API and returns parsed limit rows.
     /// Throws <see cref="ClaudeApiException"/> for known error cases.
     /// </summary>

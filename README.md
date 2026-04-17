@@ -123,3 +123,4 @@ A: Yes! The API endpoint is identical. It works beautifully as long as your sess
 - ✅ Full **open-source transparency**.
 
 *Claude Usage App is an independent open-source project and is not affiliated with or endorsed by Anthropic.*
+

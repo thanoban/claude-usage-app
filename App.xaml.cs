@@ -32,7 +32,7 @@ public partial class App : System.Windows.Application
 
         _fetcher = new UsageFetcher(api, store);
 
-        var popup = new PopupWindow(_fetcher, store, configReader);
+        var popup = new PopupWindow(_fetcher, store, configReader, api);
 
         _trayManager = new TrayManager(popup, _fetcher, store, configReader);
 
@@ -42,10 +42,11 @@ public partial class App : System.Windows.Application
         {
             // Show setup window after short delay so tray icon appears first
             await Task.Delay(500);
-            var setup = new SetupWindow(store, configReader, async () =>
+            var setup = new SetupWindow(store, configReader, api, async () =>
             {
                 _fetcher.StartTimer();
                 await _fetcher.RefreshAsync();
+                return _fetcher.Usage.Error;
             });
             setup.Show();
         }
