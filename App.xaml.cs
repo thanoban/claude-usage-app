@@ -42,7 +42,7 @@ public partial class App : System.Windows.Application
         {
             // Show setup window after short delay so tray icon appears first
             await Task.Delay(500);
-            var setup = new SetupWindow(store, configReader, api, async () =>
+            var setup = new SetupWindow(store, configReader, async () =>
             {
                 _fetcher.StartTimer();
                 await _fetcher.RefreshAsync();

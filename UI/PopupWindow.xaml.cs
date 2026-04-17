@@ -195,7 +195,7 @@ public partial class PopupWindow : Window
     private void GearButton_Click(object sender, RoutedEventArgs e)
     {
         Hide();
-        var setup = new SetupWindow(_store, _configReader, _api, async () =>
+        var setup = new SetupWindow(_store, _configReader, async () =>
         {
             await _fetcher.RefreshAsync();
             return _fetcher.Usage.Error;
