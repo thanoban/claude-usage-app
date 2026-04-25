@@ -10,6 +10,7 @@ public partial class SetupWindow : Window
     private readonly CredentialsStore _store;
     private readonly ClaudeConfigReader _configReader;
     private readonly BrowserCookieReader _cookieReader;
+    private readonly ClaudeApiService _api;
     private readonly Func<Task<string?>>? _onSaved;
 
     // Detected org ID cached from ~/.claude.json
@@ -20,6 +21,7 @@ public partial class SetupWindow : Window
         _store        = store;
         _configReader = configReader;
         _cookieReader = new BrowserCookieReader();
+        _api          = new ClaudeApiService();
         _onSaved      = onSaved;
 
         InitializeComponent();
@@ -74,6 +76,8 @@ public partial class SetupWindow : Window
         ErrorText.Visibility = Visibility.Collapsed;
 
         var orgId = _detectedOrgId ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(orgId))
+            orgId = await _api.FetchOrganizationIdAsync(session.SessionKey) ?? string.Empty;
 
         _store.Save(new Credentials
         {
@@ -164,8 +168,11 @@ public partial class SetupWindow : Window
         }
 
         if (string.IsNullOrWhiteSpace(orgId))
+            orgId = await _api.FetchOrganizationIdAsync(sessionKey) ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(orgId))
         {
-            ShowError("Please enter your Organization ID.");
+            ShowError("We couldn't detect your Organization ID automatically. Open Claude settings in your browser and paste it here.");
             OrgIdBox.Focus();
             return;
         }

@@ -32,7 +32,7 @@ public partial class App : System.Windows.Application
 
         _fetcher = new UsageFetcher(api, store);
 
-        var popup = new PopupWindow(_fetcher, store, configReader, api);
+        var popup = new PopupWindow(_fetcher, store, configReader);
 
         _trayManager = new TrayManager(popup, _fetcher, store, configReader);
 

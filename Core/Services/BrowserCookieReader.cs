@@ -16,6 +16,24 @@ public class DiscoveredSession
     public override string ToString() => $"{BrowserName}  ·  {ProfileName}";
 }
 
+/// <summary>Claude cookie context for a browser profile.</summary>
+public class BrowserCookieContext
+{
+    public string BrowserName { get; init; } = string.Empty;
+    public string ProfileName { get; init; } = string.Empty;
+    public Dictionary<string, string> Cookies { get; init; } = [];
+
+    public string? SessionKey =>
+        Cookies.TryGetValue("sessionKey", out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : null;
+
+    public string CookieHeader =>
+        string.Join("; ", Cookies
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            .Select(pair => $"{pair.Key}={pair.Value}"));
+}
+
 /// <summary>
 /// Reads Claude's sessionKey cookie from Chrome, Edge, Brave, and Firefox
 /// without any user interaction, using Windows DPAPI + AES-GCM decryption.
@@ -34,6 +52,7 @@ public class BrowserCookieReader
         ("Chromium", Path.Combine(LocalApp, @"Chromium\User Data")),
         ("Vivaldi",  Path.Combine(LocalApp, @"Vivaldi\User Data")),
         ("Opera",    Path.Combine(RoamingApp, @"Opera Software\Opera Stable")),
+        ("Claude Desktop", Path.Combine(RoamingApp, "Claude")),
     ];
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -46,6 +65,49 @@ public class BrowserCookieReader
     {
         var results = new List<DiscoveredSession>();
 
+        foreach (var context in ScanAllBrowserContexts())
+        {
+            if (!string.IsNullOrWhiteSpace(context.SessionKey))
+            {
+                results.Add(new DiscoveredSession
+                {
+                    BrowserName = context.BrowserName,
+                    ProfileName = context.ProfileName,
+                    SessionKey = context.SessionKey,
+                });
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Returns the first browser profile whose Claude cookies match the supplied session key.
+    /// Never throws.
+    /// </summary>
+    public BrowserCookieContext? FindContextBySessionKey(string sessionKey)
+    {
+        if (string.IsNullOrWhiteSpace(sessionKey)) return null;
+
+        try
+        {
+            return ScanAllBrowserContexts()
+                .FirstOrDefault(ctx => string.Equals(ctx.SessionKey, sessionKey, StringComparison.Ordinal));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Scans all supported browsers and returns every Claude cookie context found.
+    /// Never throws.
+    /// </summary>
+    public List<BrowserCookieContext> ScanAllBrowserContexts()
+    {
+        var results = new List<BrowserCookieContext>();
+
         foreach (var (name, userDataPath) in GetChromiumBrowsers())
             results.AddRange(ScanChromiumBrowser(name, userDataPath));
 
@@ -56,13 +118,13 @@ public class BrowserCookieReader
 
     // ── Chromium (Chrome / Edge / Brave / …) ─────────────────────────────────
 
-    private static List<DiscoveredSession> ScanChromiumBrowser(string browserName, string userDataPath)
+    private static List<BrowserCookieContext> ScanChromiumBrowser(string browserName, string userDataPath)
     {
-        var sessions = new List<DiscoveredSession>();
-        if (!Directory.Exists(userDataPath)) return sessions;
+        var contexts = new List<BrowserCookieContext>();
+        if (!Directory.Exists(userDataPath)) return contexts;
 
         byte[]? masterKey = GetChromiumMasterKey(Path.Combine(userDataPath, "Local State"));
-        if (masterKey == null) return sessions;
+        if (masterKey == null) return contexts;
 
         // Scan every profile folder (Default, Profile 1, Profile 2, …)
         var profileDirs = Directory.EnumerateDirectories(userDataPath)
@@ -70,11 +132,16 @@ public class BrowserCookieReader
             {
                 var name = Path.GetFileName(d);
                 return name == "Default" || name.StartsWith("Profile ", StringComparison.OrdinalIgnoreCase);
-            });
+            })
+            .ToList();
+
+        if (HasCookieDatabase(userDataPath))
+            profileDirs.Add(userDataPath);
 
         foreach (var profileDir in profileDirs)
         {
-            var profileName = Path.GetFileName(profileDir);
+            var isRootProfile = string.Equals(profileDir, userDataPath, StringComparison.OrdinalIgnoreCase);
+            var profileName = isRootProfile ? "Default" : Path.GetFileName(profileDir);
 
             // Try to read the human-friendly profile name from Preferences JSON
             try
@@ -100,17 +167,17 @@ public class BrowserCookieReader
                 cookieDb = Path.Combine(profileDir, "Cookies");
             if (!File.Exists(cookieDb)) continue;
 
-            var key = ReadChromiumCookie(cookieDb, masterKey);
-            if (!string.IsNullOrWhiteSpace(key))
-                sessions.Add(new DiscoveredSession
+            var cookies = ReadChromiumCookies(cookieDb, masterKey);
+            if (cookies.Count > 0)
+                contexts.Add(new BrowserCookieContext
                 {
                     BrowserName = browserName,
                     ProfileName = profileName,
-                    SessionKey  = key,
+                    Cookies = cookies,
                 });
         }
 
-        return sessions;
+        return contexts;
     }
 
     /// <summary>Decrypts the Chromium master AES key from Local State using DPAPI.</summary>
@@ -138,38 +205,63 @@ public class BrowserCookieReader
         catch { return null; }
     }
 
-    /// <summary>Reads and decrypts the Claude sessionKey cookie from a Chromium Cookies SQLite file.</summary>
-    private static string? ReadChromiumCookie(string cookiePath, byte[] masterKey)
+    /// <summary>Reads and decrypts Claude cookies from a Chromium Cookies SQLite file.</summary>
+    private static Dictionary<string, string> ReadChromiumCookies(string cookiePath, byte[] masterKey)
     {
-        // Copy to temp because the browser may have the file locked
-        var temp = Path.GetTempFileName();
+        var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+        var snapshotPath = TryCreateSqliteSnapshot(cookiePath);
+        if (string.IsNullOrWhiteSpace(snapshotPath)) return cookies;
+
         try
         {
-            File.Copy(cookiePath, temp, overwrite: true);
-
-            using var conn = new SqliteConnection($"Data Source={temp};Mode=ReadOnly;");
+            using var conn = new SqliteConnection($"Data Source={snapshotPath};Mode=ReadOnly;");
             conn.Open();
 
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                SELECT encrypted_value
+                SELECT name, value, encrypted_value
                 FROM   cookies
-                WHERE  host_key LIKE '%.claude.ai'
-                  AND  name = 'sessionKey'
-                LIMIT  1
+                WHERE  host_key = 'claude.ai'
+                   OR  host_key LIKE '%.claude.ai'
                 """;
 
             using var reader = cmd.ExecuteReader();
-            if (!reader.Read()) return null;
+            while (reader.Read())
+            {
+                var name = reader.GetString(0);
+                if (string.IsNullOrWhiteSpace(name)) continue;
 
-            var encValue = (byte[])reader.GetValue(0);
-            return DecryptChromiumCookieValue(encValue, masterKey);
+                string? value = null;
+
+                if (!reader.IsDBNull(1))
+                {
+                    value = reader.GetString(1);
+                }
+
+                if (string.IsNullOrWhiteSpace(value) && !reader.IsDBNull(2))
+                {
+                    var encValue = (byte[])reader.GetValue(2);
+                    value = DecryptChromiumCookieValue(encValue, masterKey);
+                }
+
+                if (!string.IsNullOrWhiteSpace(value))
+                    cookies[name] = value;
+            }
         }
-        catch { return null; }
+        catch { }
         finally
         {
-            try { File.Delete(temp); } catch { }
+            CleanupSqliteSnapshot(snapshotPath);
         }
+
+        return cookies;
+    }
+
+    private static bool HasCookieDatabase(string profileDir)
+    {
+        var networkCookies = Path.Combine(profileDir, "Network", "Cookies");
+        var rootCookies = Path.Combine(profileDir, "Cookies");
+        return File.Exists(networkCookies) || File.Exists(rootCookies);
     }
 
     /// <summary>
@@ -212,11 +304,11 @@ public class BrowserCookieReader
 
     // ── Firefox ───────────────────────────────────────────────────────────────
 
-    private List<DiscoveredSession> ScanFirefox()
+    private List<BrowserCookieContext> ScanFirefox()
     {
-        var sessions  = new List<DiscoveredSession>();
+        var contexts  = new List<BrowserCookieContext>();
         var ffProfiles = Path.Combine(RoamingApp, @"Mozilla\Firefox\Profiles");
-        if (!Directory.Exists(ffProfiles)) return sessions;
+        if (!Directory.Exists(ffProfiles)) return contexts;
 
         foreach (var profileDir in Directory.EnumerateDirectories(ffProfiles))
         {
@@ -224,43 +316,95 @@ public class BrowserCookieReader
             if (!File.Exists(cookiePath)) continue;
 
             var profileName = Path.GetFileName(profileDir);
-            var temp = Path.GetTempFileName();
+            var snapshotPath = TryCreateSqliteSnapshot(cookiePath);
+            if (string.IsNullOrWhiteSpace(snapshotPath)) continue;
+
             try
             {
-                File.Copy(cookiePath, temp, overwrite: true);
-
-                using var conn = new SqliteConnection($"Data Source={temp};Mode=ReadOnly;");
+                using var conn = new SqliteConnection($"Data Source={snapshotPath};Mode=ReadOnly;");
                 conn.Open();
 
                 using var cmd = conn.CreateCommand();
                 // Firefox stores cookie values in plaintext in the `value` column
                 cmd.CommandText = """
-                    SELECT value
+                    SELECT name, value
                     FROM   moz_cookies
-                    WHERE  host LIKE '%.claude.ai'
-                      AND  name = 'sessionKey'
-                    LIMIT  1
+                    WHERE  host = 'claude.ai'
+                       OR  host LIKE '%.claude.ai'
                     """;
 
                 using var reader = cmd.ExecuteReader();
-                if (!reader.Read()) continue;
+                var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+                while (reader.Read())
+                {
+                    var name = reader.GetString(0);
+                    var value = reader.GetString(1);
+                    if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(value))
+                        cookies[name] = value;
+                }
 
-                var val = reader.GetString(0);
-                if (!string.IsNullOrWhiteSpace(val))
-                    sessions.Add(new DiscoveredSession
+                if (cookies.Count > 0)
+                    contexts.Add(new BrowserCookieContext
                     {
                         BrowserName = "Firefox",
                         ProfileName = profileName,
-                        SessionKey  = val,
+                        Cookies = cookies,
                     });
             }
             catch { }
             finally
             {
-                try { File.Delete(temp); } catch { }
+                CleanupSqliteSnapshot(snapshotPath);
             }
         }
 
-        return sessions;
+        return contexts;
+    }
+
+    private static string? TryCreateSqliteSnapshot(string sourcePath)
+    {
+        var snapshotDir = Path.Combine(Path.GetTempPath(), $"claudeusage-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(snapshotDir);
+
+            var snapshotPath = Path.Combine(snapshotDir, Path.GetFileName(sourcePath));
+            CopyFileShared(sourcePath, snapshotPath);
+
+            CopyFileSharedIfExists($"{sourcePath}-wal", $"{snapshotPath}-wal");
+            CopyFileSharedIfExists($"{sourcePath}-shm", $"{snapshotPath}-shm");
+
+            return snapshotPath;
+        }
+        catch
+        {
+            try { Directory.Delete(snapshotDir, recursive: true); } catch { }
+            return null;
+        }
+    }
+
+    private static void CleanupSqliteSnapshot(string? snapshotPath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(snapshotPath);
+            if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+        catch { }
+    }
+
+    private static void CopyFileSharedIfExists(string sourcePath, string destinationPath)
+    {
+        if (File.Exists(sourcePath))
+            CopyFileShared(sourcePath, destinationPath);
+    }
+
+    private static void CopyFileShared(string sourcePath, string destinationPath)
+    {
+        using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var output = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        input.CopyTo(output);
     }
 }

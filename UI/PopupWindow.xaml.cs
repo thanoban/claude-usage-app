@@ -14,17 +14,15 @@ public partial class PopupWindow : Window
     private readonly UsageFetcher _fetcher;
     private readonly CredentialsStore _store;
     private readonly ClaudeConfigReader _configReader;
-    private readonly ClaudeApiService _api;
     private readonly DispatcherTimer _clockTimer;
     private Storyboard? _spinStoryboard;
     private bool _isSpinning;
 
-    public PopupWindow(UsageFetcher fetcher, CredentialsStore store, ClaudeConfigReader configReader, ClaudeApiService api)
+    public PopupWindow(UsageFetcher fetcher, CredentialsStore store, ClaudeConfigReader configReader)
     {
         _fetcher = fetcher;
         _store = store;
         _configReader = configReader;
-        _api = api;
 
         InitializeComponent();
 

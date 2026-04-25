@@ -9,6 +9,15 @@ namespace ClaudeUsage.Core.Services;
 public class ClaudeApiService
 {
     private readonly HttpClient _http;
+    private readonly BrowserCookieReader _cookieReader = new();
+    private const string DefaultUserAgent =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+
+    // Cache browser cookie context so we don't scan all profiles on every API call
+    private BrowserCookieContext? _cachedContext;
+    private string? _cachedSessionKey;
+    private DateTime _cacheExpiry = DateTime.MinValue;
+    private readonly SemaphoreSlim _scanLock = new(1, 1);
 
     public ClaudeApiService()
     {
@@ -34,8 +43,7 @@ public class ClaudeApiService
         _http.DefaultRequestHeaders.Add("sec-fetch-dest", "empty");
         _http.DefaultRequestHeaders.Add("sec-fetch-mode", "cors");
         _http.DefaultRequestHeaders.Add("sec-fetch-site", "same-origin");
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd(DefaultUserAgent);
     }
 
     /// <summary>
@@ -48,9 +56,10 @@ public class ClaudeApiService
 
         try
         {
+            var (cookieHeader, _) = await BuildCookieHeaderAsync(sessionKey);
             using var request = new HttpRequestMessage(HttpMethod.Get,
                 "https://claude.ai/api/auth/current_account");
-            request.Headers.Add("Cookie", $"sessionKey={sessionKey}");
+            request.Headers.Add("Cookie", cookieHeader);
 
             var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return null;
@@ -102,9 +111,10 @@ public class ClaudeApiService
             throw new ClaudeApiException("Session key is not configured.");
 
         var url = $"https://claude.ai/api/organizations/{organizationId}/usage";
+        var (cookieHeader, hasLocalSessionContext) = await BuildCookieHeaderAsync(sessionKey);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Add("Cookie", $"sessionKey={sessionKey}");
+        request.Headers.Add("Cookie", cookieHeader);
 
         HttpResponseMessage response;
         try
@@ -127,7 +137,10 @@ public class ClaudeApiService
         if (body.TrimStart().StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
             body.TrimStart().StartsWith("<html", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ClaudeApiException("Blocked by Cloudflare. Try updating session key.");
+            var msg = hasLocalSessionContext
+                ? "Blocked by Cloudflare challenge. Open claude.ai in your browser, then click Refresh."
+                : "Blocked by Cloudflare challenge. Your saved session key does not match an active local Claude session. Open claude.ai, sign in, update the session key, then click Refresh.";
+            throw new ClaudeApiException(msg);
         }
 
         switch (response.StatusCode)
@@ -155,6 +168,40 @@ public class ClaudeApiService
         }
 
         return BuildLimitList(usageResponse);
+    }
+
+    private async Task<(string header, bool hasContext)> BuildCookieHeaderAsync(string sessionKey)
+    {
+        await _scanLock.WaitAsync();
+        try
+        {
+            if (_cachedSessionKey != sessionKey || DateTime.UtcNow > _cacheExpiry)
+            {
+                _cachedContext = await Task.Run(() =>
+                    _cookieReader.FindContextBySessionKey(sessionKey));
+                _cachedSessionKey = sessionKey;
+                _cacheExpiry = DateTime.UtcNow.AddMinutes(5);
+            }
+        }
+        finally
+        {
+            _scanLock.Release();
+        }
+
+        var context = _cachedContext;
+        if (context == null || string.IsNullOrWhiteSpace(context.CookieHeader))
+            return ($"sessionKey={sessionKey}", false);
+
+        var cookies = new Dictionary<string, string>(context.Cookies, StringComparer.Ordinal)
+        {
+            ["sessionKey"] = sessionKey,
+        };
+
+        var header = string.Join("; ", cookies
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            .Select(pair => $"{pair.Key}={pair.Value}"));
+
+        return (header, true);
     }
 
     private static List<LimitData> BuildLimitList(UsageResponse r)
