@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using ClaudeUsage.Core;
 using ClaudeUsage.Core.Services;
 
@@ -27,16 +28,30 @@ public class TrayManager : IDisposable
         };
 
         // Build context menu
-        var menu = new System.Windows.Controls.ContextMenu();
+        var menu = new ContextMenu();
 
-        var openItem = new System.Windows.Controls.MenuItem { Header = "Open" };
+        var openItem = new MenuItem { Header = "Open" };
         openItem.Click += (_, _) => TogglePopup();
 
-        var quitItem = new System.Windows.Controls.MenuItem { Header = "Quit" };
-        quitItem.Click += (_, _) => System.Windows.Application.Current.Shutdown();
+        var startupItem = new MenuItem
+        {
+            Header = "Run at startup",
+            IsCheckable = true,
+            IsChecked = StartupManager.IsEnabled(),
+        };
+        startupItem.Click += (_, _) =>
+        {
+            StartupManager.Toggle();
+            startupItem.IsChecked = StartupManager.IsEnabled();
+        };
+
+        var quitItem = new MenuItem { Header = "Quit" };
+        quitItem.Click += (_, _) => Application.Current.Shutdown();
 
         menu.Items.Add(openItem);
-        menu.Items.Add(new System.Windows.Controls.Separator());
+        menu.Items.Add(new Separator());
+        menu.Items.Add(startupItem);
+        menu.Items.Add(new Separator());
         menu.Items.Add(quitItem);
 
         _trayIcon.ContextMenu = menu;

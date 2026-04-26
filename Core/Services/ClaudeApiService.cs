@@ -32,17 +32,22 @@ public class ClaudeApiService
             Timeout = TimeSpan.FromSeconds(30),
         };
 
-        // Static request headers required by Claude API
+        // Static request headers — must match what Chrome sends to pass Cloudflare checks
         _http.DefaultRequestHeaders.Clear();
         _http.DefaultRequestHeaders.Accept.ParseAdd("*/*");
         _http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
+        _http.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip, deflate, br");
+        _http.DefaultRequestHeaders.Add("sec-ch-ua",
+            "\"Google Chrome\";v=\"135\", \"Not-A.Brand\";v=\"8\", \"Chromium\";v=\"135\"");
+        _http.DefaultRequestHeaders.Add("sec-ch-ua-mobile", "?0");
+        _http.DefaultRequestHeaders.Add("sec-ch-ua-platform", "\"Windows\"");
+        _http.DefaultRequestHeaders.Add("sec-fetch-dest", "empty");
+        _http.DefaultRequestHeaders.Add("sec-fetch-mode", "cors");
+        _http.DefaultRequestHeaders.Add("sec-fetch-site", "same-origin");
         _http.DefaultRequestHeaders.Add("anthropic-client-platform", "web_claude_ai");
         _http.DefaultRequestHeaders.Add("anthropic-client-version", "1.0.0");
         _http.DefaultRequestHeaders.Add("origin", "https://claude.ai");
         _http.DefaultRequestHeaders.Add("referer", "https://claude.ai/settings/usage");
-        _http.DefaultRequestHeaders.Add("sec-fetch-dest", "empty");
-        _http.DefaultRequestHeaders.Add("sec-fetch-mode", "cors");
-        _http.DefaultRequestHeaders.Add("sec-fetch-site", "same-origin");
         _http.DefaultRequestHeaders.UserAgent.ParseAdd(DefaultUserAgent);
     }
 
@@ -147,6 +152,7 @@ public class ClaudeApiService
         {
             case HttpStatusCode.Unauthorized:
             case HttpStatusCode.Forbidden:
+                InvalidateCookieCache();
                 throw new ClaudeApiException("Session expired. Please update your session key.");
             case HttpStatusCode.TooManyRequests:
                 throw new ClaudeApiException("Rate limited. Try again in a minute.");
@@ -168,6 +174,13 @@ public class ClaudeApiService
         }
 
         return BuildLimitList(usageResponse);
+    }
+
+    public void InvalidateCookieCache()
+    {
+        _cachedSessionKey = null;
+        _cacheExpiry = DateTime.MinValue;
+        _cachedContext = null;
     }
 
     private async Task<(string header, bool hasContext)> BuildCookieHeaderAsync(string sessionKey)
